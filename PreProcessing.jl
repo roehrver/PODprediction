@@ -10,7 +10,7 @@ using StatsBase,
     DataFrames,
     CovarianceEstimation
 
-push!(LOAD_PATH, homedir() * "/Promotion/BCI/")
+#push!(LOAD_PATH, homedir() * "path to Segment")
 using Segment
 export filterandrereference,
     burstsuppressionestimation, covariancetimeline, spectrumtimeline
@@ -45,20 +45,20 @@ bsr (burst suppression ratio)
 lbsp (longest burst suppression phase)
 burstsupp (total suppression time)
 """
-function burstsuppressionestimation(data, times, sr, remove_afterbandpass)
-    dataS = bandpassSegmentToChannels(data, [0.3, 60], sr)#optional =data
+function burstsuppressionestimation(data, times, sr, remove_afterbandpass, quan=0.6, bs_th=0.8)
+    dataS = bandpassSegmentToChannels(data, [0.3, 50], sr)#optional =data
     b = []
-    temp = findall(abs.(dataS[:, 3]) .< quantile(abs.(dataS[:, 3]), 0.6))
+    temp = findall(abs.(dataS[:, 3]) .< quantile(abs.(dataS[:, 3]), quan))
     b = zeros(length(data[:, 3]))
     b[temp] .= 1
     b = [mean(b[max(1, i - 64):min(length(b), i + 64)]) for i = 1:length(b)]
     keep = setdiff(1:length(times), remove_afterbandpass)
     lbsp = zeros(length(b[keep]))
-    lbsp[findall(b[keep] .> 0.8)] .= 1
+    lbsp[findall(b[keep] .> bs_th)] .= 1
     l = 1
     temp = 1
     for i = 1:length(lbsp)
-        if lbsp[i] == 1# && i<length(lbsr) do not count BS, if it is til the last recorded timepoint that is unlikely
+        if lbsp[i] == 1# && i<length(lbsr) do not count BS, if it is till the last recorded timepoint that is unlikely
             temp = temp + 1
         else
             if temp > l
@@ -68,9 +68,9 @@ function burstsuppressionestimation(data, times, sr, remove_afterbandpass)
             temp = 1
         end
     end
-    bsr = length(findall(b[keep] .> 0.8)) / length(b[keep])
+    bsr = length(findall(b[keep] .> bs_th)) / length(b[keep])
     lbsp = l / sr
-    burstsupp = length(findall(b[keep] .> 0.8)) / sr
+    burstsupp = length(findall(b[keep] .> bs_th)) / sr
     return b, bsr, lbsr, burstsupp
 end
 
@@ -166,7 +166,7 @@ function covariancetimeline(
     remove_afterbandpass;
     minutes = 2,
 )
-    data = bandpassSegment2Channels(data, [0.3, 4, 8, 12, 15, 20, 30, 60], sr)
+    data = bandpassSegment2Channels(data, [0.3, 4, 8, 12, 15, 20, 30, 50], sr)
     #add burst burst suppression timeline to stacked data
     dataB = zeros(size(data)[1], size(data)[2] + 1)
     dataB[:, 1:size(data)[2]] = data
@@ -182,10 +182,12 @@ function covariancetimeline(
     clusterbytimeframes = clustertimeframes(segmentedtimes, minutes)
 
     S = Vector{Hermitian}(undef, size(clusterbytimeframes)[1] - 1)
-    for j = 1:size(clusterbytimeframes)[1]-1
-        l = minimum([clusterbytimeframes[j+1] - 1, size(C)[1]])
-        tmp2 = ℍVector([C[i] for i = clusterbytimeframes[j]:l])
-        temp = mean(Fisher, tmp2; verbose = false)
+    for j=1:size(clusterbytimeframes)[1]-1
+        l=minimum([clusterbytimeframes[j+1]-1, size(C)[1]])
+        lengthtimes=[length(segmentedtimes[i]) for i = clusterbytimeframes[j]:l]
+        lengthtimes=lengthtimes/sum(lengthtimes)
+        tmp2=ℍVector([C[i] for i = clusterbytimeframes[j]:l])
+        temp=mean(Fisher, tmp2; w=lengthtimes, verbose=false) #mean weighted by segment length
         S[j] = Hermitian(temp)
     end
     return S, ppp
@@ -215,7 +217,7 @@ function spectrumtimeline(
     minutes = 2,
     ppp = [],
 )
-    dataS = bandpassSegmentToChannels(data, [0.3, 60], sr)
+    dataS = bandpassSegmentToChannels(data, [0.3, 50], sr)
     dt = fit(ZScoreTransform, dataS, dims = 2)
     dataS = StatsBase.transform(dt, dataS)
     segmenteddata, segmentedtimes =
@@ -224,12 +226,12 @@ function spectrumtimeline(
     deleteat!(segmenteddata, ppp)
     clusterbytimeframes = clustertimeframes(segmentedtimes, minutes)
     S = Vector{Matrix{Float64}}(undef, size(clusterbytimeframes)[1] - 1)
-    for j = 1:size(clusterbytimeframes)[1]-1
-        Σ = mean(
-            spectra(segmenteddata[c], Int(sr), Int(sr); func = √).y for
-            c = clusterbytimeframes[j]:clusterbytimeframes[j+1]
-        )
-        S[j] = Σ
+    for j=1:size(clusterbytimeframes)[1]-1#?????
+        lengthtimes=[length(segmentedtimes[i]) for i = clusterbytimeframes[j]:clusterbytimeframes[j+1]]
+        lengthtimes=lengthtimes/sum(lengthtimes)
+        sp=[spectra(segmenteddata[c], Int(sr), Int(sr); func=√).y for c=clusterbytimeframes[j]:clusterbytimeframes[j+1]]
+        Σ=sum(sp[i]*lengthtimes[i] for i=1:length(lengthtimes))#mean weighted by segment length
+        S[j]=Σ
     end
     return S
 end

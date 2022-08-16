@@ -36,18 +36,6 @@ function artifactfilter(data, times, sr, quant)
     ns, ne = size(data)
     cutoff = []
     ampl = Int[]
-    l = length(data[:, 1])
-    data_mean = [mean(data[i, :]) for i = 1:length(times)]
-    #filter out when recording continued after OP stopped, in next iteration cur to length of OP
-    data_dif = [
-        1 / mean(data_mean[i+1, :] - data_mean[i, :]) for i = 1:length(times)-1
-    ]
-    q = max(quantile!(data_dif, 0.925), 10)
-    append!(ampl, findall(data_dif .> q))
-    #high amplitude filter
-    ampl = sort(unique(ampl))
-    ampl = ampl[findall(ampl .> length(times) * 0.85)]
-    data[ampl, :] = zeros(length(ampl), ne)
     for i = 1:ne
         q = quantile!(data[:, i], quant)
         append!(cutoff, q)

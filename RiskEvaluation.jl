@@ -20,6 +20,7 @@ learning in Python. Journal of Machine Learning Research 12 (2011) 2825–2830.
 """
 @sk_import metrics:balanced_accuracy_score
 @sk_import metrics:roc_auc_score
+@sk_import metrics:roc_curve
 @sk_import svm:SVC
 @sk_import preprocessing:StandardScaler
 @sk_import model_selection:GridSearchCV
@@ -233,7 +234,8 @@ numberoftimeframesTrain --> number of covariances for each training patient (Vec
 meanperPatient --> geometric mean for each training patient (of type Vector{Hermitian})
 meanperTest --> geometric mean for each test patient (of type Vector{Hermitian}, not used)
 beta --> balanced accuracy score threshold for training set to accept or reject a SVM
-
+noS --> number of time frames for minority class
+bags --> number of saved estimators
 
 returns prediction on testset (p) and training set (pT).
 """
@@ -248,15 +250,17 @@ function cov_prediction(
     meanperPatient,
     meanperTest,
     beta,
+    noS=15,
+    bags=10,
 )
     #------------------------------------------------------------------------------------------
-    bags = 10
-    noS = 15
+
     yTest = [0 for i = 1:length(Test) for j = 1:numberoftimeframesTest[i]]#zeros(size(Test)[1])#[
     yTrain =
         [0 for i = 1:length(trainclassPP) for j = 1:numberoftimeframesTrain[i]]
     allTrain = Vector{Vector{Hermitian}}(Train)
-    r = 1
+    r = 0
+    out = 0
     while r < bags
         Train, trainclass, currentnumberoftimeframesTrain, mpP =
             randomundersampling(
@@ -268,6 +272,9 @@ function cov_prediction(
                 ratio = 0.6,
                 split = 3,
             )
+        #this step (riemaniandistanceoutlier) was taken out for the final publication,
+        #however it increases robustness,
+        #especially when tranfering a model to an independent data set
         Train, trainclass, currentnumberoftimeframesTrain, mpP =
             riemaniandistanceoutlier(
                 trainclass,
@@ -349,9 +356,17 @@ function cov_prediction(
             j = 1:length(noTF)-1
         ]
         alpha = balanced_accuracy_score(trainclassPP, y_pred)
-        if alpha < beta
+        if alpha<beta
             println("out")
             println(mean(tmp))
+            out=out+1
+            if out>maximum([10, r*5])
+                beta=beta-0.025
+                println("change beta")
+                println(out)
+                println(beta)
+                out=1
+            end
             continue
         end
         tmp = ScikitLearn.predict(m2, test)
@@ -402,6 +417,8 @@ medicationT --> medication of training set (set to [] when only 1 medication is 
 numberoftimeframesTest --> number of covariances for each test patient (Vector)
 numberoftimeframesTrain --> number of covariances for each training patient (Vector)
 beta --> balanced accuracy score threshold for training set to accept or reject a SVM
+noS --> number of time frames for minority class
+bags --> number of saved estimators
 
 returns prediction on testset (p) and training set (pT).
 """
@@ -414,14 +431,15 @@ function spectrum_prediction(
     numberoftimeframesTest,
     numberoftimeframesTrain,
     beta,
-)
-    bags = 15
+    bags = 15,
     noS = 5
+)
     yTest = [0 for i = 1:length(Test) for j = 1:numberoftimeframesTest[i]]#zeros(size(Test)[1])#[
     yTrain =
         [0 for i = 1:length(trainclassPP) for j = 1:numberoftimeframesTrain[i]]
     allTrain = Vector{Vector{Matrix{Float64}}}(Train)
-    r = 1
+    r = 0
+    out = 0
     while r < bags
         Train, trainclass, currentnumberoftimeframesTrain = randomundersampling(
             trainclassPP,
@@ -505,9 +523,17 @@ function spectrum_prediction(
             j = 1:length(noTF)-1
         ]
         alpha = balanced_accuracy_score(trainclassPP, y_pred)
-        if alpha < beta
+        if alpha<beta
             println("out")
             println(mean(tmp))
+            out=out+1
+            if out>maximum([10, r*5])
+                beta=beta-0.025
+                println("change beta")
+                println(out)
+                println(beta)
+                out=1
+            end
             continue
         end
 
@@ -559,98 +585,103 @@ into account. T marks the training set.
 returns prediction on testset (pComb) and training set (pCombT).
 """
 function risk_eval(trainclasses, pEEGT, pST, pMedT, pEEG, pS, pMed)
-    add = [1]
-    addT = [1]
-    if roc_auc_score(trainclasses, pEEGT) > 0.75 &&
-       roc_auc_score(trainclasses, pMedT) > 0.75
-        add = (pEEG + pMed) / 2
-        addT = (pEEGT + pMedT) / 2
-    elseif roc_auc_score(trainclasses, pST) > 0.75 &&
-           roc_auc_score(trainclasses, pMedT) > 0.75
-        add = (pS + pMed) / 2
-        addT = (pST + pMedT) / 2
+    add=[1]
+    addT=[1]
+    if roc_auc_score(trainclasses, pEEGT)>0.75 && roc_auc_score(trainclasses, pMedT)>0.75
+        add = (pEEG+pMed)/2
+        addT = (pEEGT+pMedT)/2
+    elseif roc_auc_score(trainclasses, pST)>0.75 && roc_auc_score(trainclasses, pMedT)>0.75
+        add = (pS+pMed)/2
+        addT = (pST+pMedT)/2
     end
-    if roc_auc_score(trainclasses, pEEGT) > 0.75 &&
-       roc_auc_score(trainclasses, pMedT) > 0.75 &&
-       roc_auc_score(trainclasses, pST) > 0.75
-        add = (pEEG + pS + pMed) / 3
-        addT = (pEEGT + pST + pMedT) / 3
+    if roc_auc_score(trainclasses, pEEGT)>0.75 && roc_auc_score(trainclasses, pMedT)>0.75 && roc_auc_score(trainclasses, pST)>0.75
+        add = (pEEG+pS+pMed)/3
+        addT = (pEEGT+pST+pMedT)/3
     end
-    probneg = findall(x -> x < 0.25, add)
-    probnegT = findall(x -> x < 0.25, addT)
+    probneg=findall(x->x<0.25, add)
+    probnegT=findall(x->x<0.25, addT)
 
-    pComb = max.(min.(pEEG, pS), pMed)
-    pCombT = max.(min.(pEEGT, pST), pMedT)
+    println("EEG THRESHOLD")
+    fpr, tpr, threshold = roc_curve(trainclasses, pEEGT ,drop_intermediate=false)
+    tpr[findall(tpr.<0.5)].=0
+    gmean = sqrt.(tpr .*(1 .-fpr))
+    println(argmax(gmean))
+    println(gmean[argmax(gmean)])
+    println(fpr[argmax(gmean)])
+    println(tpr[argmax(gmean)])
+    println(threshold[argmax(gmean)])
+    eeg_th=min(threshold[argmax(gmean)], 1)
+
+    println("Spectrum THRESHOLD")
+    fpr, tpr, threshold = roc_curve(trainclasses, pST ,drop_intermediate=false)
+    tpr[findall(tpr.<0.5)].=0
+    gmean = sqrt.(tpr .*(1 .-fpr))
+    println(argmax(gmean))
+    println(gmean[argmax(gmean)])
+    println(fpr[argmax(gmean)])
+    println(tpr[argmax(gmean)])
+    println(threshold[argmax(gmean)])
+    spec_th=min(threshold[argmax(gmean)], 1)
+
+
+    println("MED THRESHOLD")
+    fpr, tpr, threshold = roc_curve(trainclasses, pMedT,drop_intermediate=false)
+    tpr[findall(tpr.<0.5)].=0
+    gmean = sqrt.(tpr .*(1 .-fpr))
+    println(argmax(gmean))
+    println(gmean[argmax(gmean)])
+    println(fpr[argmax(gmean)])
+    println(tpr[argmax(gmean)])
+    println(threshold[argmax(gmean)])
+    med_th=min(threshold[argmax(gmean)], 1)
+    println("--------------")
+
+    pComb = max.(min.(pEEG.+(0.5-eeg_th),pS.+(0.5-spec_th)),pMed.+(0.5-med_th))
+    pCombT= max.(min.(pEEGT.+(0.5-eeg_th),pST.+(0.5-spec_th)),pMedT.+(0.5-eeg_th))
     println(roc_auc_score(trainclasses, pCombT))
+    pCombTT=Array(pCombT)
+    pCombTT[probnegT]=addT[probnegT]
+    println(roc_auc_score(trainclasses, pCombTT))
 
-    println("Add")
-    pCombT = addT[probnegT]
-    pComb[probneg] = add[probneg]
-    println(roc_auc_score(trainclasses, pCombT))
+    if roc_auc_score(trainclasses, pCombTT)>roc_auc_score(trainclasses, pCombT)
+        println("Add")
+        pCombT=pCombTT
+        pComb[probneg]=add[probneg]
+    else
+        probneg=[]
+        probnegT=[]
+    end
 
 
-    pCombTT = max.(min.(pEEGT .+ 0.05, pST), pMedT)
-    pCombTT[probnegT] = addT[probnegT]
-    if roc_auc_score(trainclasses, pCombTT) >
-       roc_auc_score(trainclasses, pCombT)
-        println("EEG + 0.05")
-        pComb = max.(min.(pEEG .+ 0.05, pS), pMed)
-        pComb[probneg] = add[probneg]
-        pCombT = pCombTT#max.(min.(pEEGT.+0.05,pST),pMedT)
+    pCombTT= max.(min.(pEEGT.+(0.5-eeg_th), pST.+(0.5-spec_th)),pMedT)
+    pCombTT[probnegT]=addT[probnegT]
+    if roc_auc_score(trainclasses, pCombTT)>roc_auc_score(trainclasses, pCombT)
+        println("EEG + th, Spec + th")
+        pComb = max.(min.(pEEG.+(0.5-eeg_th), pS.+(0.5-spec_th)),pMed)
+        pComb[probneg]=add[probneg]
+        pCombT= pCombTT#max.(min.(pEEGT.+0.05,pST),pMedT)
         println(roc_auc_score(trainclasses, pCombT))
     end
-    pCombTT = max.(min.(pEEGT, pST .+ 0.05), pMedT)
-    pCombTT[probnegT] = addT[probnegT]
 
-    if roc_auc_score(trainclasses, pCombTT) >
-       roc_auc_score(trainclasses, pCombT)
-        println("Spec + 0.05")
-        pComb = max.(min.(pEEG, pS .+ 0.05), pMed)
-        pComb[probneg] = add[probneg]
-        pCombT = pCombTT
+    pCombTT= max.(min.(pEEGT.+(0.5-eeg_th), pST),pMedT.+(0.5-med_th))
+    pCombTT[probnegT]=addT[probnegT]
+    if roc_auc_score(trainclasses, pCombTT)>roc_auc_score(trainclasses, pCombT)
+        println("EEG + th, Med + th")
+        pComb = max.(min.(pEEG.+(0.5-eeg_th), pS),pMed.+(0.5-med_th))
+        pComb[probneg]=add[probneg]
+        pCombT= pCombTT#max.(min.(pEEGT.+0.05,pST),pMedT)
         println(roc_auc_score(trainclasses, pCombT))
     end
-    pCombTT = max.(min.(pEEGT .+ 0.05, pST .+ 0.05), pMedT)
-    pCombTT[probnegT] = addT[probnegT]
 
-    if roc_auc_score(trainclasses, pCombTT) >
-       roc_auc_score(trainclasses, pCombT)
-        println("both + 0.05")
-        pComb = max.(min.(pEEG .+ 0.05, pS .+ 0.05), pMed)
-        pComb[probneg] = add[probneg]
-        pCombT = pCombTT
+    pCombTT= max.(min.(pEEGT, pST.+(0.5-spec_th)),pMedT.+(0.5-med_th))
+    pCombTT[probnegT]=addT[probnegT]
+    if roc_auc_score(trainclasses, pCombTT)>roc_auc_score(trainclasses, pCombT)
+        println("Spec + th, Med + th")
+        pComb = max.(min.(pEEG, pS.+(0.5-spec_th)),pMed.+(0.5-med_th))
+        pComb[probneg]=add[probneg]
+        pCombT= pCombTT#max.(min.(pEEGT.+0.05,pST),pMedT)
         println(roc_auc_score(trainclasses, pCombT))
     end
-    pCombTT = max.(min.(pEEGT .- 0.05, pST), pMedT)
-    pCombTT[probnegT] = addT[probnegT]
-    if roc_auc_score(trainclasses, pCombTT) >
-       roc_auc_score(trainclasses, pCombT)
-        println("EEG - 0.05")
-        pComb = max.(min.(pEEG .- 0.05, pS), pMed)
-        pComb[probneg] = add[probneg]
-        pCombT = pCombTT
-        println(roc_auc_score(trainclasses, pCombT))
-    end
-    pCombTT = max.(min.(pEEGT, pST .- 0.05), pMedT)
-    pCombTT[probnegT] = addT[probnegT]
-    if roc_auc_score(trainclasses, pCombTT) >
-       roc_auc_score(trainclasses, pCombT)
-        println("Spec - 0.05")
-        pComb = max.(min.(pEEG, pS .- 0.05), pMed)
-        pComb[probneg] = add[probneg]
-        pCombT = pCombTT
-        println(roc_auc_score(trainclasses, pCombT))
-    end
-    pCombTT = max.(min.(pEEGT .- 0.05, pST .- 0.05), pMedT)
-    pCombTT[probnegT] = addT[probnegT]
-    if roc_auc_score(trainclasses, pCombTT) >
-       roc_auc_score(trainclasses, pCombT)
-        println("both - 0.05")
-        pComb = max.(min.(pEEG .- 0.05, pS .- 0.05), pMed)
-        pComb[probneg] = add[probneg]
-        pCombT = pCombTT
-        println(roc_auc_score(trainclasses, pCombT))
-    end
+
     return pCombT, pComb
-end
 end
