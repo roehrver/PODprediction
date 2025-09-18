@@ -28,21 +28,6 @@ The analysis was conducted on two cohorts of elderly patients from Charité Berl
 - **PreprocessingPipeline.jl** - Main preprocessing workflow coordination (template - not complete pipeline)
 - **PrototypicalCVSpectrumPipeline.jl** - Example cross-validation pipeline showing fold structure and workflow (template - not complete pipeline)
 
-
-## Key Features
-
-- **Novel burst suppression detection**: Two-step algorithm for robust burst suppression identification
-- **Multi-feature approach**: Integration of three complementary EEG feature sets
-- **Medication-specific modeling**: Eliminates pharmacological confounds by training anesthetic-specific models
-- **Domain adaptation**: Robust transfer between different patient cohorts and recording protocols
-- **Meta-classifier**: Integrates multiple approaches for optimal performance
-
-## Method Highlights
-
-- Addresses the challenge that maintenance anesthetic choice creates profound EEG differences that classifiers initially exploit as POD proxies
-- Demonstrates that EEG-based vulnerability markers add crucial discriminative power when demographic predictors fail
-- Particularly effective in homogeneous elderly populations where age and clinical scores lack sufficient resolution
-
 ## Dependencies
 
 The pipeline uses the following Julia packages:
